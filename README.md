@@ -1,5 +1,7 @@
 # YITAM FastMCP Server
 
+[![CI](https://github.com/hadv/yitam-fast-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hadv/yitam-fast-mcp/actions/workflows/ci.yml)
+
 Semantic search over a Qdrant knowledge base, exposed over the Model Context Protocol.
 
 This is a Python/[FastMCP](https://gofastmcp.com) port of the TypeScript
@@ -102,6 +104,11 @@ uv run pytest
 uv run ruff check .
 uv run mypy src
 ```
+
+CI runs those three on every push and pull request, and separately builds the Docker
+image and smoke-tests it against a throwaway Qdrant to confirm the container starts
+and rejects unauthenticated requests. No secrets are needed: the tests stub Qdrant and
+Gemini, and the smoke test only exercises the handshake.
 
 ## Porting notes
 

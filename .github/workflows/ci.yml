@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # --locked fails if pyproject.toml and uv.lock have drifted apart.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Ruff
+        run: uv run ruff check --output-format=github .
+
+      - name: Mypy
+        run: uv run mypy src
+
+      # No secrets needed: every test stubs Qdrant and Gemini.
+      - name: Pytest
+        run: uv run pytest -q
+
+  docker:
+    name: Image builds and serves
+    runs-on: ubuntu-latest
+    env:
+      MCP_AUTH_TOKEN: ci-token
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: yitam-fast-mcp:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # An empty Qdrant is enough: the server logs that the collection is absent
+      # and starts anyway, which is all the smoke test needs.
+      - name: Start Qdrant and the server
+        run: |
+          set -euo pipefail
+          docker network create ci
+          docker run -d --name qdrant --network ci qdrant/qdrant:latest
+          docker run -d --name server --network ci -p 3000:3000 \
+            -e TRANSPORT=http -e HOST=0.0.0.0 -e PORT=3000 \
+            -e QDRANT_URL=http://qdrant:6333 \
+            -e COLLECTION_NAME=ci_smoke \
+            -e MCP_AUTH_TOKEN="$MCP_AUTH_TOKEN" \
+            yitam-fast-mcp:ci
+
+      - name: Wait for the health check
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' server)
+            echo "[$i] health=$status"
+            if [ "$status" = healthy ]; then exit 0; fi
+            if [ "$status" = unhealthy ]; then docker logs server; exit 1; fi
+            sleep 3
+          done
+          echo "never became healthy"; docker logs server; exit 1
+
+      - name: Auth is enforced and the MCP handshake succeeds
+        run: |
+          set -euo pipefail
+          INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+          post() {
+            curl -sS -o /tmp/body -w '%{http_code}' -X POST http://127.0.0.1:3000/mcp \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' \
+              "$@" -d "$INIT"
+          }
+          expect() {
+            local want=$1; shift
+            local got
+            got=$(post "$@")
+            if [ "$got" != "$want" ]; then
+              echo "expected HTTP $want, got $got"; cat /tmp/body; exit 1
+            fi
+            echo "  -> HTTP $got as expected"
+          }
+
+          echo "no token:";    expect 401
+          echo "wrong token:"; expect 401 -H 'Authorization: Bearer wrong'
+          echo "valid token:"; expect 200 -H "Authorization: Bearer $MCP_AUTH_TOKEN"
+
+          grep -q 'yitam-server' /tmp/body || { echo "serverInfo missing"; cat /tmp/body; exit 1; }
+          echo "auth enforced and handshake returned serverInfo"
+
+      - name: Server logs
+        if: always()
+        run: docker logs server 2>&1 | tail -30
