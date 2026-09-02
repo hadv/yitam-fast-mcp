@@ -9,6 +9,9 @@ dependencies = [
     "fastmcp>=4.0.1",
     "qdrant-client>=1.19.0",
     "google-genai>=2.21.0",
+    # Imported directly by server.py (Field), so declared rather than relied on
+    # as a transitive dependency of fastmcp/qdrant-client/google-genai.
+    "pydantic>=2",
     "pydantic-settings>=2.0",
     # cryptography (pulled in transitively by FastMCP's auth stack) stopped shipping
     # macOS x86_64 wheels at 49.0. Without this cap an Intel Mac compiles it from
