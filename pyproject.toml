@@ -1,0 +1,54 @@
+[project]
+name = "yitam-fast-mcp"
+version = "1.0.0"
+description = "YITAM MCP server - semantic search over a Qdrant knowledge base, built on FastMCP"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "fastmcp>=4.0.1",
+    "qdrant-client>=1.19.0",
+    "google-genai>=2.21.0",
+    "pydantic-settings>=2.0",
+    # cryptography (pulled in transitively by FastMCP's auth stack) stopped shipping
+    # macOS x86_64 wheels at 49.0. Without this cap an Intel Mac compiles it from
+    # source with Rust. Linux and Apple Silicon are unaffected.
+    "cryptography<49; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[project.scripts]
+yitam-mcp = "yitam_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yitam_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Verbatim prose copied from the TypeScript server; must not be reflowed.
+"src/yitam_mcp/tool_description.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
